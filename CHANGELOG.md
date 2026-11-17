@@ -2,6 +2,12 @@
 
 Oh Dear Application Health checker for Craft CMS.
 
+## Unreleased
+### Added
+- `errorLogIgnoreClientErrors` config option (default `true`): the error log check no longer counts 4xx HTTP exceptions (`yii\web\HttpException:4xx`), such as bot probes, expired CSRF tokens and missing control panel source maps. Craft already leaves 404s out of its logs; this covers the other client errors.
+- `errorLogIgnorePatterns` config option: regular expressions for log lines that should not be counted as errors.
+- The error log check's meta now shows how many entries were ignored.
+
 ## 1.4.0 – 2026-08-20
 ### Added
 - `errorLogFiles` and `errorLogLevels` config options for the error log check

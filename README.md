@@ -115,6 +115,12 @@ return [
     'queueFailedThreshold' => 2,
     'errorLogFiles' => ['web', 'queue', 'console'],
     'errorLogLevels' => ['error', 'critical', 'alert', 'emergency'],
+    // Don't count 4xx HTTP exceptions (bots, probes, expired forms) as errors
+    'errorLogIgnoreClientErrors' => true,
+    // Extra regular expressions; matching log lines are not counted as errors
+    'errorLogIgnorePatterns' => [
+        // '/\[geomate\]/',
+    ],
     'diskUsagePath' => '/',
 	'diskUsageThreshold' => 90,
 ];

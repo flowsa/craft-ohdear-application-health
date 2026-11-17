@@ -356,8 +356,22 @@ class HealthCheckService extends Component
             $levels
         )) . ')\]/i';
 
+        // Lines matching any of these patterns are not counted as errors
+        $ignorePatterns = array_values(array_filter(
+            (array)($this->config['errorLogIgnorePatterns'] ?? []),
+            static fn($p): bool => is_string($p) && @preg_match($p, '') !== false
+        ));
+
+        // Yii logs HTTP exceptions under the category `yii\web\HttpException:<status>`.
+        // 4xx responses are client errors (bots, probes, expired forms), not application
+        // faults. Craft already excludes 404s from its logs; this covers the rest.
+        if ($this->config['errorLogIgnoreClientErrors'] ?? true) {
+            $ignorePatterns[] = '/\[yii\\\\web\\\\HttpException:4\d\d\]/';
+        }
+
         $meta = [];
         $errorCount = 0;
+        $ignoredCount = 0;
 
         foreach ($logNames as $logName) {
             // Craft 4.4+ and Craft 5 rotate log files daily, older setups don’t
@@ -380,15 +394,23 @@ class HealthCheckService extends Component
                 continue;
             }
 
-            $fileErrorCount = $this->countLogMatches($logPath . DIRECTORY_SEPARATOR . $logFile, $pattern);
+            $counts = $this->countLogMatches($logPath . DIRECTORY_SEPARATOR . $logFile, $pattern, $ignorePatterns);
 
-            if ($fileErrorCount === null) {
+            if ($counts === null) {
                 $meta[$logFile] = 'Error reading file';
                 continue;
             }
 
-            $meta[$logFile] = "{$fileErrorCount} errors";
+            [$fileErrorCount, $fileIgnoredCount] = $counts;
+
+            $meta[$logFile] = "{$fileErrorCount} errors"
+                . ($fileIgnoredCount > 0 ? " ({$fileIgnoredCount} ignored)" : '');
             $errorCount += $fileErrorCount;
+            $ignoredCount += $fileIgnoredCount;
+        }
+
+        if ($ignoredCount > 0) {
+            $meta['Ignored'] = "{$ignoredCount} entries matched errorLogIgnoreClientErrors / errorLogIgnorePatterns";
         }
 
         $status = $errorCount === 0 ? CheckResult::STATUS_OK : CheckResult::STATUS_WARNING;
@@ -408,9 +430,13 @@ class HealthCheckService extends Component
      * Counts the lines in a log file that match the given pattern, reading the
      * file line by line to keep memory usage low on large log files.
      *
-     * @return int|null The number of matching lines, or `null` if the file could not be read
+     * Matching lines that also match one of the ignore patterns are counted
+     * separately and not reported as errors.
+     *
+     * @param string[] $ignorePatterns
+     * @return array{0: int, 1: int}|null The number of matching and ignored lines, or `null` if the file could not be read
      */
-    private function countLogMatches(string $filePath, string $pattern): ?int
+    private function countLogMatches(string $filePath, string $pattern, array $ignorePatterns = []): ?array
     {
         $handle = @fopen($filePath, 'rb');
 
@@ -419,18 +445,28 @@ class HealthCheckService extends Component
         }
 
         $count = 0;
+        $ignored = 0;
 
         try {
             while (($line = fgets($handle)) !== false) {
-                if (preg_match($pattern, $line) === 1) {
-                    $count++;
+                if (preg_match($pattern, $line) !== 1) {
+                    continue;
                 }
+
+                foreach ($ignorePatterns as $ignorePattern) {
+                    if (preg_match($ignorePattern, $line) === 1) {
+                        $ignored++;
+                        continue 2;
+                    }
+                }
+
+                $count++;
             }
         } finally {
             fclose($handle);
         }
 
-        return $count;
+        return [$count, $ignored];
     }
 
     private function addGitChangesCheck(CheckResults $checkResults): void
